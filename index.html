@@ -1,0 +1,227 @@
+<!<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Juego de vocabulario alemán</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#4CAF50">
+  <style>
+    body { font-family: Arial, sans-serif; padding: 20px; margin: 0; background: #f5f5f5; color: #333; }
+    h2 { text-align: center; }
+    .hidden { display: none; }
+    textarea, input {
+      width: 100%; padding: 12px; font-size: 16px;
+      border: 1px solid #ccc; border-radius: 8px; margin: 8px 0; box-sizing: border-box;
+    }
+    button {
+      display: block; width: 100%; padding: 14px; font-size: 18px;
+      border: none; border-radius: 10px; margin: 10px 0;
+      background: #4CAF50; color: white; cursor: pointer;
+    }
+    button:hover { background: #45a049; }
+    #question { font-size: 20px; margin-bottom: 10px; text-align: center; }
+    #feedback { font-size: 18px; text-align: center; margin: 10px 0; font-weight: bold; }
+    #progress { font-size: 16px; text-align: center; margin: 5px 0; }
+    #result { font-size: 18px; white-space: pre-line; }
+    .mistake { margin: 10px 0; padding: 8px; background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    .given { color: #d9534f; font-weight: bold; }   /* 🔴 lo escrito */
+    .correct { color: #5cb85c; font-weight: bold; } /* 🟢 lo correcto */
+  </style>
+</head>
+<body>
+  <h2>Juego de vocabulario alemán</h2>
+
+  <!-- Selección y guardado de listas -->
+  <div id="menu-section">
+    <label for="list-select">Elige una lista guardada:</label>
+    <select id="list-select"></select>
+    <button onclick="loadSelectedList()">📂 Usar lista seleccionada</button>
+    <button onclick="deleteList()">🗑️ Borrar lista seleccionada</button>
+    <hr>
+    <p>O crea una nueva lista (formato: <i>artículo singular + palabra singular - artículo plural + palabra plural</i>):</p>
+    <input type="text" id="list-name" placeholder="Nombre de la lista">
+    <textarea id="word-list" rows="6" placeholder="das Auto - die Autos\ndas Buch - die Bücher\ndas Glas - die Gläser"></textarea>
+    <button onclick="saveList()">💾 Guardar lista</button>
+    <button onclick="startGame()">▶️ Comenzar juego con esta lista</button>
+  </div>
+
+  <!-- Juego -->
+  <div id="game-section" class="hidden">
+    <p id="question"></p>
+    <input type="text" id="answer-article" placeholder="Artículo singular">
+    <input type="text" id="answer-plural" placeholder="Plural">
+    <button onclick="checkAnswer()">Responder</button>
+    <p id="feedback"></p>
+    <p id="progress"></p>
+  </div>
+
+  <!-- Resultados -->
+  <div id="result-section" class="hidden">
+    <div id="result"></div>
+    <button onclick="playAgain()">🔄 Jugar otra vez con la misma lista</button>
+    <button onclick="newList()">➕ Volver al menú</button>
+  </div>
+
+  <script>
+    let words = [], currentIndex = 0, score = 0, fails = 0, shuffled = [];
+    let mistakes = []; // Guardar errores
+
+    // ===================== LISTAS =====================
+    function populateSavedLists() {
+      const select = document.getElementById("list-select");
+      select.innerHTML = "";
+      const lists = JSON.parse(localStorage.getItem("vocabLists") || "{}");
+      for (const name in lists) {
+        const option = document.createElement("option");
+        const count = lists[name].split(/\r?\n/).filter(l => l.trim()).length;
+        option.value = name;
+        option.textContent = `${name} (${count} palabras)`;
+        select.appendChild(option);
+      }
+    }
+
+    function saveList() {
+      const name = document.getElementById("list-name").value.trim();
+      const text = document.getElementById("word-list").value.trim();
+      if (!name || !text) return alert("Ponle nombre y contenido a la lista.");
+      const lists = JSON.parse(localStorage.getItem("vocabLists") || "{}");
+      lists[name] = text;
+      localStorage.setItem("vocabLists", JSON.stringify(lists));
+      populateSavedLists();
+      alert("✅ Lista guardada.");
+    }
+
+    function deleteList() {
+      const select = document.getElementById("list-select");
+      if (!select.value) return alert("No hay lista seleccionada.");
+      const lists = JSON.parse(localStorage.getItem("vocabLists") || "{}");
+      delete lists[select.value];
+      localStorage.setItem("vocabLists", JSON.stringify(lists));
+      populateSavedLists();
+      alert("🗑️ Lista eliminada.");
+    }
+
+    function loadSelectedList() {
+      const select = document.getElementById("list-select");
+      if (!select.value) return alert("Selecciona una lista.");
+      const lists = JSON.parse(localStorage.getItem("vocabLists") || "{}");
+      document.getElementById("list-name").value = select.value;
+      document.getElementById("word-list").value = lists[select.value];
+    }
+
+    // ===================== JUEGO =====================
+    function startGame() {
+      const text = document.getElementById("word-list").value.trim();
+      if (!text) return alert("Introduce al menos una palabra.");
+      
+      words = text.split(/\r?\n/).map(line => {
+        const parts = line.split("-").map(p => p.trim());
+        if (parts.length === 2) {
+          const [sing, plur] = parts;
+          const singParts = sing.split(" ");
+          const article = singParts[0];
+          const word = singParts.slice(1).join(" ");
+          const plurParts = plur.split(" ");
+          const articlePlural = plurParts[0];
+          const wordPlural = plurParts.slice(1).join(" ");
+          return { article, word, articlePlural, wordPlural };
+        }
+      }).filter(Boolean);
+
+      if (words.length === 0) return alert("Formato incorrecto.");
+
+      shuffled = shuffle([...words]);
+      currentIndex = 0; score = 0; fails = 0; mistakes = [];
+
+      document.getElementById("menu-section").classList.add("hidden");
+      document.getElementById("game-section").classList.remove("hidden");
+      document.getElementById("result-section").classList.add("hidden");
+      showQuestion();
+    }
+
+    function showQuestion() {
+      const w = shuffled[currentIndex];
+      document.getElementById("question").innerText = `___ ${w.word} - ${w.articlePlural} _____`;
+      document.getElementById("answer-article").value = "";
+      document.getElementById("answer-plural").value = "";
+      document.getElementById("feedback").innerText = "";
+      document.getElementById("progress").innerText = `Palabra ${currentIndex + 1} de ${shuffled.length}`;
+      document.getElementById("answer-article").focus();
+    }
+
+    function checkAnswer() {
+      const w = shuffled[currentIndex];
+      const art = document.getElementById("answer-article").value.trim();
+      const plur = document.getElementById("answer-plural").value.trim();
+      if (art === w.article && plur === w.wordPlural) {
+        score++;
+        document.getElementById("feedback").innerText = "✅ Correcto";
+        document.getElementById("feedback").style.color = "green";
+      } else {
+        fails++;
+        document.getElementById("feedback").innerText =
+          `❌ Incorrecto. Correcto: ${w.article} ${w.word} - ${w.articlePlural} ${w.wordPlural}`;
+        document.getElementById("feedback").style.color = "red";
+        mistakes.push({
+          given: `${art} ${w.word} - ${plur}`,
+          correct: `${w.article} ${w.word} - ${w.articlePlural} ${w.wordPlural}`
+        });
+      }
+      currentIndex++;
+      if (currentIndex < shuffled.length) {
+        setTimeout(showQuestion, 3000); // ⏱ 3 segundos
+      } else {
+        setTimeout(showResult, 3000);   // ⏱ 3 segundos
+      }
+    }
+
+    function showResult() {
+      document.getElementById("game-section").classList.add("hidden");
+      document.getElementById("result-section").classList.remove("hidden");
+      
+      let resultHTML = `<p>¡Juego terminado!<br>✅ Aciertos: ${score}<br>❌ Fallos: ${fails}</p>`;
+      if (mistakes.length > 0) {
+        resultHTML += `<h3>📋 Errores cometidos:</h3>`;
+        mistakes.forEach((m, i) => {
+          resultHTML += `
+            <div class="mistake">
+              <p><b>${i + 1}.</b> Tú pusiste: <span class="given">${m.given}</span></p>
+              <p>✔️ Correcto: <span class="correct">${m.correct}</span></p>
+            </div>`;
+        });
+      }
+      document.getElementById("result").innerHTML = resultHTML;
+    }
+
+    function playAgain() {
+      shuffled = shuffle([...words]);
+      currentIndex = 0; score = 0; fails = 0; mistakes = [];
+      document.getElementById("result-section").classList.add("hidden");
+      document.getElementById("game-section").classList.remove("hidden");
+      showQuestion();
+    }
+
+    function newList() {
+      document.getElementById("menu-section").classList.remove("hidden");
+      document.getElementById("game-section").classList.add("hidden");
+      document.getElementById("result-section").classList.add("hidden");
+    }
+
+    function shuffle(array) {
+      for (let i = array.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [array[i], array[j]] = [array[j], array[i]];
+      }
+      return array;
+    }
+
+    // ===================== INIT =====================
+    populateSavedLists();
+
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js');
+    }
+  </script>
+</body>
+</html>
